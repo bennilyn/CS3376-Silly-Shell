@@ -159,22 +159,77 @@ int doCmd(char * tokenAry[]) {
       else {
          say("I'm not waiting up for you!\n", 1);
       }
+      
+      // That's it! The parent is all done. Return to caller
+      return 0; // note, the "else" below is redundant, but keep it while debugging
    }
    else {
       // Child here. Do the command.
       // exec* will be a "dead end". Execution will not resume after exec* unless error occurs.
       say("Performing the command...\n", 1);
-      
+
+      // Do we need another child process?
+      if (nextCommand == 4) {
+         // I'm the parent now. Do what I say.
+         // I will execute the command I see now and pipe stdout to the child.
+         // The child is going to execute the next command, and pipe stdin from me
+         // element 0 = input, element 1 = output
+         int pipefd[2];
+         pipe(pipefd);
+         // Now do the classic swap around from sunysb.edu handout
+         int grandChild = fork();
+         if (grandChild != 0) {
+            // I'm the new parent
+            // Switch my output (1) to the pipe's "write" end (1)
+            dup2(pipefd[1], 1);
+            // Get rid of the pipe's "write" (it's duplicate)
+            close(pipefd[1]);
+            // And get rid of the "read" end (the child already has it)
+            close(pipefd[0]);
+
+            // We don't care about anything after the end of the command, so zap it at the pipe.
+            // "The array of pointers must be terminated by a NULL pointer."
+            tokenAry[idxDelim] = NULL;
+
+            // int execvp(const char *file, char *const argv[]);
+            execvp(tokenAry[0], tokenAry);
+            say("Something went terribly wrong with the command (attempting to pipe, parent) Sorry!\n", 1);
+            return 1;
+         }
+         else {
+            // I'm the baby
+            // Switch my input (0) to the pipe's "read" end (0)
+            dup2(pipefd[0], 0);
+            // Get rid of the pipe's "read" (it's duplicate)
+            close(pipefd[0]);
+            // And get rid of the pipe's "write" end (the parent already has it)
+            close(pipefd[1]);
+            
+            // Now, run the command *after* the pipe symbol.
+            // My stdin is already redirected, so just run with it!
+            return doCmd(&tokenAry[idxDelim + 1]);
+         }
+         
+         // (We never get here - returns in both branches)
+
+      } // end if pipe "|"      
+
+      // We're not piping to a child.
+      // Future, redirect input/output to/from file
+
       // "Part 1" - we don't care what made the command line end, just zap it
+      // (Won't hurt the child process, it got its own copy)
       // "The array of pointers must be terminated by a NULL pointer."
       tokenAry[idxDelim] = NULL;
       
       // int execvp(const char *file, char *const argv[]);
       execvp(tokenAry[0], tokenAry);
+      // We only get here on error
       say("Something went terribly wrong with the command. Sorry!\n", 1);
       return 1;
    } // end if (else) parent  
 
+   // We will never actually reach this line
    return 0;
 
 } // end doExec()

@@ -11,3 +11,8 @@
 *.lai
 *.la
 *.a
+
+# Windows stuff (added manually)
+*.lnk
+# My in-progress stuff (added manually)
+tempbak
