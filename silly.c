@@ -2,7 +2,12 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <string.h>
+// Required for wait
 #include <sys/wait.h>
+// Required for file handling
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
 // Constants
 const char MAX_TOKEN = 99;
@@ -20,7 +25,7 @@ int main()
    char * tokenAry[MAX_TOKEN];
    
    printf("Silly Shell, for CS 3376 by Robert Brooks / rab120130@utdallas.edu\n");
-   say("Hi! I'm a silly shell, and I'm at your 'command'\n", 1);
+   say("Hi! I'm a silly shell, and I'm at your 'command'.\n", 1);
    /* prompt me! */
    printf("%s ", prompt);
    /* Input... INPUT!!! */
@@ -57,12 +62,12 @@ int main()
          tokenAry[curTokPtr] = curTok; // null
       }
    
-      say("Here's what I saw when you hit Enter:\n", 1);
-      int i;
-      for (i = 0; i < MAX_TOKEN; i++) {
-         if (tokenAry[i] == NULL) break;
-         printf("%s\n", tokenAry[i]);
-      }
+      //say("Here's what I saw when you hit Enter:\n", 1);
+      //int i;
+      //for (i = 0; i < MAX_TOKEN; i++) {
+      //   if (tokenAry[i] == NULL) break;
+      //   printf("%s\n", tokenAry[i]);
+      //}
 
       if (strcasecmp(tokenAry[0], "exit") == 0) {
          say("You said 'exit'\n", 1);
@@ -101,135 +106,152 @@ void say(const char *msg, int smile) {
 
 // Perform the command (will be called recursively)
 int doCmd(char * tokenAry[]) {
-   char temp[256]; // temp string for messages about the line
+   //char temp[256]; // temp string for messages about the line
+   //char filename[256];
+   int fdRedir;
    
    // We have a command. How far does it go?
    int nextCommand = 0; // 0 = end  
-   sprintf(temp, "Here's the command: %s\n", tokenAry[0]);
-   say(temp, 1);
-   say("Parameters:", 1);
    int idxDelim;
-   for (idxDelim = 1; idxDelim < MAX_TOKEN; idxDelim++) {
+   // Note, we could start with a delimiter (grep silly < silly.c | less)
+   for (idxDelim = 0; idxDelim < MAX_TOKEN; idxDelim++) {
       if (tokenAry[idxDelim] == NULL) { nextCommand = 0; break; }
       if (strcmp(tokenAry[idxDelim], "<") == 0) { nextCommand = 1; break; }
       if (strcmp(tokenAry[idxDelim], ">") == 0) { nextCommand = 2; break; }
       if (strcmp(tokenAry[idxDelim], ">>") == 0) { nextCommand = 3; break; }
       if (strcmp(tokenAry[idxDelim], "|") == 0) { nextCommand = 4; break; }
       if (strcmp(tokenAry[idxDelim], "&") == 0) { nextCommand = 5; break; }
-      printf(" %s", tokenAry[idxDelim]);
    }
-   printf("\n");
+   
+   // Do we have anything to do? If not, exit
+   if (nextCommand == 0 && idxDelim == 0) {
+      say("Hey, you left me hanging! No command to execute.\n", 1);
+      return 1;
+   }   
 
    // Send off a child and see what it does
    int childPid = fork();
    
    if (childPid != 0) {
-      // Parent here. Say what we think the child will do
-      switch (nextCommand)
-      {
-         case 0: // end
-            say("I would execute the command and wait for it to complete.", 1);
-            break;
-         case 1: // <
-            say("I would get input from a file for this command.", 1);
-            break;
-         case 2: // >
-            say("I would send output from this command to a file.", 1);
-            break;
-         case 3: // >>
-            say("I would send output from this command to a file (append).", 1);
-            break;
-         case 4: // |
-            say("I would pipe output from this command to the next one.", 1);
-            break;
-         case 5: // &
-            say("I would execute the command in the background.", 1);
-            break;
-         //  default:
-      }  
-      printf("\n");
-
+      // Parent here. All we can do is sit by the door and wait for the kid to come home.
       if (nextCommand != 5) {
          // Wait for the child to complete
-         say("Waiting for the command...\n", 1);
+         //say("Waiting for the command...\n", 1);
          // waitpid(-1, &status, 0); // wait for all children, but we want to wait for specific child
          waitpid(childPid, NULL, 0); // null because we're not checking status (yet)
-         say("All done!\n", 1);
+         //say("All done!\n", 1);
       } // if we need to wait
-      else {
-         say("I'm not waiting up for you!\n", 1);
-      }
+      //else {
+      //   say("I'm not waiting up for you!\n", 1);
+      //}
       
       // That's it! The parent is all done. Return to caller
-      return 0; // note, the "else" below is redundant, but keep it while debugging
+      return 0;
    }
-   else {
-      // Child here. Do the command.
-      // exec* will be a "dead end". Execution will not resume after exec* unless error occurs.
-      say("Performing the command...\n", 1);
+   
+   // If we're here, we're the child process, and we need to do whatever the tokens in our head say to do.
+   //say("Performing the command...\n", 1);
 
-      // Do we need another child process?
-      if (nextCommand == 4) {
-         // I'm the parent now. Do what I say.
-         // I will execute the command I see now and pipe stdout to the child.
-         // The child is going to execute the next command, and pipe stdin from me
-         // element 0 = input, element 1 = output
-         int pipefd[2];
-         pipe(pipefd);
-         // Now do the classic swap around from sunysb.edu handout
-         int grandChild = fork();
-         if (grandChild != 0) {
-            // I'm the new parent
-            // Switch my output (1) to the pipe's "write" end (1)
-            dup2(pipefd[1], 1);
-            // Get rid of the pipe's "write" (it's duplicate)
-            close(pipefd[1]);
-            // And get rid of the "read" end (the child already has it)
-            close(pipefd[0]);
+   // Do we need another child process?
+   if (nextCommand == 4) {
+      // I'm the parent now. Do what I say.
+      // I will execute the command I see now and pipe stdout to the child.
+      // The child is going to execute the next command, and pipe stdin from me
+      // element 0 = input, element 1 = output
+      int pipefd[2];
+      pipe(pipefd);
+      // Now do the classic swap around from sunysb.edu handout
+      int grandChild = fork();
+      if (grandChild != 0) {
+         // I'm the new parent
+         //say("I'm the new parent!\n", 1);
+         // Switch my output (1) to the pipe's "write" end (1)
+         dup2(pipefd[1], 1);
+         // Get rid of the pipe's "write" (it's duplicate)
+         close(pipefd[1]);
+         // And get rid of the "read" end (the child already has it)
+         close(pipefd[0]);
 
-            // We don't care about anything after the end of the command, so zap it at the pipe.
-            // "The array of pointers must be terminated by a NULL pointer."
-            tokenAry[idxDelim] = NULL;
+         // We don't care about anything after the end of the command, so zap it at the pipe.
+         // "The array of pointers must be terminated by a NULL pointer."
+         tokenAry[idxDelim] = NULL;
 
-            // int execvp(const char *file, char *const argv[]);
-            execvp(tokenAry[0], tokenAry);
-            say("Something went terribly wrong with the command (attempting to pipe, parent) Sorry!\n", 1);
+         // int execvp(const char *file, char *const argv[]);
+         execvp(tokenAry[0], tokenAry);
+         say("Something went terribly wrong with the command (attempting to pipe, parent) Sorry!\n", 1);
+         return 1;
+      }
+      else {
+         // I'm the baby
+         //say("I'm the new baby!\n", 1);
+         // Switch my input (0) to the pipe's "read" end (0)
+         dup2(pipefd[0], 0);
+         // Get rid of the pipe's "read" (it's duplicate)
+         close(pipefd[0]);
+         // And get rid of the pipe's "write" end (the parent already has it)
+         close(pipefd[1]);
+         
+         // Now, run the command *after* the pipe symbol.
+         // My stdin is already redirected, so just run with it!
+         return doCmd(&tokenAry[idxDelim + 1]);
+      }
+      
+      // (We never get here - returns in both branches)
+
+   } // end if command = pipe "|"      
+
+   // We're not piping to a child. Do we need to redirect i/o?
+   switch (nextCommand)
+   {
+      case 1:
+      case 2:
+      case 3:
+         // Next token is filename
+         // We could have something like "< in.txt | less".
+         // Not sure how to handle that yet.
+         if (tokenAry[idxDelim+1] == NULL) {
+            say("Hey, you told me there was a file, but you didn't give me one!\n", 1);
             return 1;
          }
-         else {
-            // I'm the baby
-            // Switch my input (0) to the pipe's "read" end (0)
-            dup2(pipefd[0], 0);
-            // Get rid of the pipe's "read" (it's duplicate)
-            close(pipefd[0]);
-            // And get rid of the pipe's "write" end (the parent already has it)
-            close(pipefd[1]);
-            
-            // Now, run the command *after* the pipe symbol.
-            // My stdin is already redirected, so just run with it!
-            return doCmd(&tokenAry[idxDelim + 1]);
-         }
+         //printf("%s\n", tokenAry[idxDelim+1]);
          
-         // (We never get here - returns in both branches)
+         // Open the file with the low-level command so we get a File Descriptor
+         // int open(const char *pathname, int flags)
+         switch (nextCommand)
+         {
+            case 1: // <
+               // Get a FD for reading, and change stdin to use it
+               fdRedir = open(tokenAry[idxDelim+1], O_RDONLY);
+               dup2(fdRedir, 0);
+               break;
+            case 2: // >
+               // Get a FD for writing, and change stdout to use it
+               fdRedir = open(tokenAry[idxDelim+1], O_WRONLY | O_CREAT);
+               dup2(fdRedir, 1);
+               break;
+            case 3: // >>
+               fdRedir = open(tokenAry[idxDelim+1], O_WRONLY | O_APPEND);
+               dup2(fdRedir, 1);
+               break;
+            //default:
+         } // end switch (where we treat each differently)
 
-      } // end if pipe "|"      
+         // Don't need both, right?
+         //close(fdRedir);
+         break;
 
-      // We're not piping to a child.
-      // Future, redirect input/output to/from file
-
-      // "Part 1" - we don't care what made the command line end, just zap it
-      // (Won't hurt the child process, it got its own copy)
-      // "The array of pointers must be terminated by a NULL pointer."
-      tokenAry[idxDelim] = NULL;
-      
-      // int execvp(const char *file, char *const argv[]);
-      execvp(tokenAry[0], tokenAry);
-      // We only get here on error
-      say("Something went terribly wrong with the command. Sorry!\n", 1);
-      return 1;
-   } // end if (else) parent  
-
-   // We will never actually reach this line
-   return 0;
+      //default:
+   } // end switch (where we get a filename if needed)
+   
+   // We don't care what made the command line end, just zap it
+   // (Won't hurt the child or parent process, we got our own copy)
+   // "The array of pointers must be terminated by a NULL pointer."
+   tokenAry[idxDelim] = NULL;
+   
+   // int execvp(const char *file, char *const argv[]);
+   execvp(tokenAry[0], tokenAry);
+   // We only get here on error
+   say("Something went terribly wrong with the command. Sorry!\n", 1);
+   return 1;
 
 } // end doExec()
